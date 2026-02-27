@@ -149,6 +149,52 @@ TargetDot.Visible, TargetDot.NumSides = false, 16
 --//    _diedConn            – Humanoid.Died connection
 --// ═══════════════════════════════════════════
 local Pool = {}   -- [char] = entry
+local CharacterRegistry = {} -- [char] = true
+local DestroyEntry
+
+local function RegisterCharacter(char)
+    if char and char:IsA("Model") then
+        CharacterRegistry[char] = true
+    end
+end
+
+local function UnregisterCharacter(char)
+    if not char then return end
+    CharacterRegistry[char] = nil
+    if Pool[char] then DestroyEntry(char) end
+end
+
+local function IsCharacterCandidate(char)
+    if char == LPChar then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return true
+end
+
+local function AddPlayerCharacterHooks(player)
+    player.CharacterAdded:Connect(RegisterCharacter)
+    player.CharacterRemoving:Connect(UnregisterCharacter)
+    if player.Character then RegisterCharacter(player.Character) end
+end
+
+for _, p in ipairs(Players:GetPlayers()) do
+    AddPlayerCharacterHooks(p)
+end
+
+Players.PlayerAdded:Connect(AddPlayerCharacterHooks)
+Players.PlayerRemoving:Connect(function(p)
+    if p.Character then UnregisterCharacter(p.Character) end
+end)
+
+-- Optional NPC folder support (common convention)
+local NPCFolder = workspace:FindFirstChild("NPCs")
+if NPCFolder then
+    for _, npc in ipairs(NPCFolder:GetChildren()) do
+        RegisterCharacter(npc)
+    end
+    NPCFolder.ChildAdded:Connect(RegisterCharacter)
+    NPCFolder.ChildRemoved:Connect(UnregisterCharacter)
+end
 
 -- All Drawing keys in one place (used for bulk hide/destroy)
 local DRAW_KEYS = {
@@ -201,7 +247,7 @@ local function MakeEntry(char)
     return e
 end
 
-local function DestroyEntry(char)
+function DestroyEntry(char)
     local e = Pool[char]
     if not e then return end
     Pool[char] = nil
@@ -417,10 +463,9 @@ local function GetTarget()
     local best, bestScore = nil, math.huge
     local origin = GetAimOrigin()
 
-    for _, char in ipairs(workspace:GetChildren()) do
-        if char == LPChar then continue end
+    for char in pairs(CharacterRegistry) do
+        if not IsCharacterCandidate(char) then continue end
         local hum  = char:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
 
         local part = char:FindFirstChild(S.TargetPart) or char:FindFirstChild("Head")
         if not part then continue end
@@ -632,13 +677,19 @@ RunService:BindToRenderStep("AimBox_Main", Enum.RenderPriority.Camera.Value + 1,
 
     local seen = {}
 
-    for _, char in ipairs(workspace:GetChildren()) do
-        if char == LPChar then continue end
+    for char in pairs(CharacterRegistry) do
         local hum = char:FindFirstChildOfClass("Humanoid")
+
+        if not char.Parent then
+            UnregisterCharacter(char)
+            continue
+        end
+        if char == LPChar then continue end
 
         -- Dead char still sitting in workspace → nuke immediately
         if hum and hum.Health <= 0 and Pool[char] then
             DestroyEntry(char)
+            CharacterRegistry[char] = nil
             continue
         end
         if not hum or hum.Health <= 0 then continue end
@@ -665,13 +716,13 @@ end)
 --// ═══════════════════════════════════════════
 
 -- Player leaves the game
-Players.PlayerRemoving:Connect(function(p)
-    if p.Character then DestroyEntry(p.Character) end
-end)
-
 -- Character model removed from workspace (respawn cycle, kicked, etc.)
 workspace.ChildRemoved:Connect(function(child)
-    if Pool[child] then DestroyEntry(child) end
+    if CharacterRegistry[child] then
+        UnregisterCharacter(child)
+    elseif Pool[child] then
+        DestroyEntry(child)
+    end
 end)
 
 --// ═══════════════════════════════════════════
