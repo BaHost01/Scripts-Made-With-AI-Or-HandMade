@@ -533,71 +533,79 @@ local function IsPartTargetable(part)
 end
 
 --// ═══════════════════════════════════════════
---//  RAYFIELD UI
+--//  OBSIDIAN UI
 --// ═══════════════════════════════════════════
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-local Window   = Rayfield:CreateWindow({
-    Name            = "Aimbot + Box ESP",
-    LoadingTitle    = "Loading v4.0...",
-    LoadingSubtitle = "Optimized Edition",
-    ConfigurationSaving = { Enabled = true, FileName = "AimBox_v4" },
-    KeySystem       = false
+local repo         = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Window = Library:CreateWindow({
+    Title = "Aimbot + Box ESP",
+    Footer = "v4.0",
+    Icon = 4483362458,
+    NotifySide = "Right",
+    ShowCustomCursor = true,
 })
 
-local AimTab    = Window:CreateTab("Aimbot",   4483362458)
-local BoxTab    = Window:CreateTab("2D Boxes", 4483362458)
-local FilterTab = Window:CreateTab("Filters",  4483362458)
-local MiscTab   = Window:CreateTab("Misc",     4483362458)
+local Tabs = {
+    Aimbot = Window:AddTab("Aimbot", "crosshair"),
+    Boxes = Window:AddTab("2D Boxes", "square"),
+    Filters = Window:AddTab("Filters", "funnel"),
+    Misc = Window:AddTab("Misc", "wrench"),
+    ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
+}
 
 --// ─── AIMBOT TAB ─────────────────────────────
-AimTab:CreateSection("Core")
-AimTab:CreateToggle({ Name="Enable Aimbot",       CurrentValue=false, Flag="AimEn",   Callback=function(v) S.AimEnabled  =v end })
-AimTab:CreateToggle({ Name="Auto Attack",         CurrentValue=false, Flag="AutoFire",Callback=function(v) S.AutoFire    =v end })
-AimTab:CreateToggle({ Name="Velocity Prediction", CurrentValue=true,  Flag="VelPred", Callback=function(v) S.Prediction  =v end })
-AimTab:CreateToggle({ Name="Require Right-Click (PC)", CurrentValue=true, Flag="ReqADS", Callback=function(v) S.RequireADS=v end })
-AimTab:CreateToggle({ Name="Visible Targets Only", CurrentValue=false, Flag="VisOnly", Callback=function(v) S.VisibleOnly=v end })
-AimTab:CreateToggle({ Name="Sticky Aim", CurrentValue=true, Flag="StickyAim", Callback=function(v) S.StickyAim=v end })
-AimTab:CreateToggle({ Name="Strict Alive Check", CurrentValue=true, Flag="AliveChk", Callback=function(v) S.AliveCheck=v end })
-AimTab:CreateToggle({ Name="Adaptive Smooth", CurrentValue=true, Flag="AdaptSm", Callback=function(v) S.AdaptiveSmooth=v end })
+local AimCore   = Tabs.Aimbot:AddLeftGroupbox("Core", "crosshair")
+local AimParams = Tabs.Aimbot:AddRightGroupbox("Parameters", "sliders-horizontal")
+local AimTarget = Tabs.Aimbot:AddLeftGroupbox("Target", "target")
+local AimVisual = Tabs.Aimbot:AddRightGroupbox("Visuals", "eye")
 
-AimTab:CreateSection("Parameters")
-AimTab:CreateSlider({ Name="FOV Radius",                    Range={30,450},Increment=5, CurrentValue=150,Flag="FOVRad",
+AimCore:AddToggle("AimEn", { Text="Enable Aimbot", Default=false, Callback=function(v) S.AimEnabled=v end })
+AimCore:AddToggle("AutoFire", { Text="Auto Attack", Default=false, Callback=function(v) S.AutoFire=v end })
+AimCore:AddToggle("VelPred", { Text="Velocity Prediction", Default=true, Callback=function(v) S.Prediction=v end })
+AimCore:AddToggle("ReqADS", { Text="Require Right-Click (PC)", Default=true, Callback=function(v) S.RequireADS=v end })
+AimCore:AddToggle("VisOnly", { Text="Visible Targets Only", Default=false, Callback=function(v) S.VisibleOnly=v end })
+AimCore:AddToggle("StickyAim", { Text="Sticky Aim", Default=true, Callback=function(v) S.StickyAim=v end })
+AimCore:AddToggle("AliveChk", { Text="Strict Alive Check", Default=true, Callback=function(v) S.AliveCheck=v end })
+AimCore:AddToggle("AdaptSm", { Text="Adaptive Smooth", Default=true, Callback=function(v) S.AdaptiveSmooth=v end })
+
+AimParams:AddSlider("FOVRad", { Text="FOV Radius", Default=150, Min=30, Max=450, Rounding=0,
     Callback=function(v) S.FOV=v; FOVCircle.Radius=v end })
-AimTab:CreateSlider({ Name="Smoothness  (lower = snappier)",Range={1,100}, Increment=1, CurrentValue=18, Flag="Smooth",
+AimParams:AddSlider("Smooth", { Text="Smoothness (lower = snappier)", Default=18, Min=1, Max=100, Rounding=0,
     Callback=function(v) S.Smoothness=v/100 end })
-AimTab:CreateSlider({ Name="Spread",                        Range={0,20},  Increment=1, CurrentValue=2,  Flag="Spread",
+AimParams:AddSlider("Spread", { Text="Spread", Default=2, Min=0, Max=20, Rounding=0,
     Callback=function(v) S.Spread=v end })
-AimTab:CreateSlider({ Name="Prediction Strength",           Range={0,30},  Increment=1, CurrentValue=8,  Flag="PredStr",
+AimParams:AddSlider("PredStr", { Text="Prediction Strength", Default=8, Min=0, Max=30, Rounding=0,
     Callback=function(v) S.PredStrength=v/100 end })
-AimTab:CreateSlider({ Name="Sticky Time (ms)",              Range={0,1000},Increment=25,CurrentValue=350,Flag="StickyTime",
+AimParams:AddSlider("StickyTime", { Text="Sticky Time (ms)", Default=350, Min=0, Max=1000, Rounding=0,
     Callback=function(v) S.StickyTime=v/1000 end })
-AimTab:CreateSlider({ Name="Auto Attack Delay (ms)",        Range={20,250},Increment=5, CurrentValue=80, Flag="AutoAtkDelay",
+AimParams:AddSlider("AutoAtkDelay", { Text="Auto Attack Delay (ms)", Default=80, Min=20, Max=250, Rounding=0,
     Callback=function(v) S.AutoFireDelay=v/1000 end })
-AimTab:CreateSlider({ Name="Switch Delay (ms)",             Range={0,500}, Increment=10, CurrentValue=120, Flag="SwDelay",
+AimParams:AddSlider("SwDelay", { Text="Switch Delay (ms)", Default=120, Min=0, Max=500, Rounding=0,
     Callback=function(v) S.TargetSwitchDelay=v/1000 end })
-AimTab:CreateSlider({ Name="Aim Deadzone (px)",             Range={0,35},  Increment=1, CurrentValue=4,  Flag="Deadzone",
+AimParams:AddSlider("Deadzone", { Text="Aim Deadzone (px)", Default=4, Min=0, Max=35, Rounding=0,
     Callback=function(v) S.Deadzone=v end })
-AimTab:CreateSlider({ Name="Adaptive Min Smooth",            Range={1,100}, Increment=1, CurrentValue=10, Flag="MinSmooth",
+AimParams:AddSlider("MinSmooth", { Text="Adaptive Min Smooth", Default=10, Min=1, Max=100, Rounding=0,
     Callback=function(v) S.AdaptiveMinSmooth=v/100 end })
 
-AimTab:CreateSection("Target")
-AimTab:CreateDropdown({ Name="Priority",
-    Options={"Closest to Crosshair","Lowest Health","Closest Distance"},
-    CurrentOption={"Closest to Crosshair"},Flag="Prio",
-    Callback=function(o) S.Priority=o[1] end })
-AimTab:CreateDropdown({ Name="Target Part",
-    Options={"Head","HumanoidRootPart","UpperTorso","Torso"},
-    CurrentOption={"Head"},Flag="TgtPart",
-    Callback=function(o) S.TargetPart=o[1] end })
+AimTarget:AddDropdown("Prio", { Text="Priority", Values={"Closest to Crosshair","Lowest Health","Closest Distance"}, Default=1,
+    Callback=function(v) S.Priority=v end })
+AimTarget:AddDropdown("TgtPart", { Text="Target Part", Values={"Head","HumanoidRootPart","UpperTorso","Torso"}, Default=1,
+    Callback=function(v) S.TargetPart=v end })
 
-AimTab:CreateSection("Visuals")
-AimTab:CreateToggle({ Name="Show FOV Circle",CurrentValue=true, Flag="ShowFOV",Callback=function(v) S.ShowFOV=v; FOVCircle.Visible=v end })
-AimTab:CreateToggle({ Name="Show Target Dot",CurrentValue=true, Flag="ShowDot",Callback=function(v) S.ShowDot=v end })
-AimTab:CreateToggle({ Name="Dynamic FOV Color",CurrentValue=true, Flag="DynFovCol",Callback=function(v) S.DynamicFOVColor=v end })
+AimVisual:AddToggle("ShowFOV", { Text="Show FOV Circle", Default=true, Callback=function(v) S.ShowFOV=v; FOVCircle.Visible=v end })
+AimVisual:AddToggle("ShowDot", { Text="Show Target Dot", Default=true, Callback=function(v) S.ShowDot=v end })
+AimVisual:AddToggle("DynFovCol", { Text="Dynamic FOV Color", Default=true, Callback=function(v) S.DynamicFOVColor=v end })
 
 --// ─── 2D BOXES TAB ────────────────────────────
-BoxTab:CreateSection("Box")
-BoxTab:CreateToggle({ Name="Enable Boxes", CurrentValue=true, Flag="BoxEn",
+local BoxCore   = Tabs.Boxes:AddLeftGroupbox("Box", "square")
+local BoxStyle  = Tabs.Boxes:AddRightGroupbox("Fill + Style", "paintbrush")
+local BoxLabels = Tabs.Boxes:AddLeftGroupbox("Labels", "type")
+local BoxTracer = Tabs.Boxes:AddRightGroupbox("Tracer", "move-down")
+
+BoxCore:AddToggle("BoxEn", { Text="Enable Boxes", Default=true,
     Callback=function(v)
         S.BoxEnabled = v
         if not v then
@@ -605,67 +613,95 @@ BoxTab:CreateToggle({ Name="Enable Boxes", CurrentValue=true, Flag="BoxEn",
         end
     end
 })
-BoxTab:CreateDropdown({ Name="Box Style",
-    Options={"Corner","Full"},
-    CurrentOption={"Corner"}, Flag="BoxStyle",
-    Callback=function(o) S.BoxStyle=o[1] end })
-BoxTab:CreateSlider({ Name="Thickness",         Range={1,4},   Increment=1,  CurrentValue=2,  Flag="BoxThick",   Callback=function(v) S.BoxThickness=v end })
-BoxTab:CreateSlider({ Name="Corner Arm Length", Range={5,50},  Increment=1,  CurrentValue=25, Flag="CornerLen",  Callback=function(v) S.CornerLen=v/100 end })
-BoxTab:CreateSlider({ Name="Max Render Distance",Range={50,2000},Increment=50,CurrentValue=500,Flag="MaxDist",   Callback=function(v) S.MaxDist=v end })
+BoxCore:AddSlider("MaxDist", { Text="Max Render Distance", Default=500, Min=50, Max=2000, Rounding=0,
+    Callback=function(v) S.MaxDist=v end })
+BoxCore:AddSlider("BoxThick", { Text="Thickness", Default=2, Min=1, Max=4, Rounding=0,
+    Callback=function(v) S.BoxThickness=v end })
+BoxCore:AddSlider("CornerLen", { Text="Corner Arm Length (%)", Default=25, Min=5, Max=50, Rounding=0,
+    Callback=function(v) S.CornerLen=v/100 end })
 
-BoxTab:CreateSection("Fill")
-BoxTab:CreateToggle({ Name="Filled Box",        CurrentValue=false,Flag="BoxFill",   Callback=function(v) S.BoxFilled=v end })
-BoxTab:CreateSlider({ Name="Fill Transparency", Range={0,100},Increment=5,CurrentValue=85,Flag="FillTrans",
+BoxStyle:AddDropdown("BoxStyle", { Text="Box Style", Values={"Corner","Full"}, Default=1,
+    Callback=function(v) S.BoxStyle=v end })
+BoxStyle:AddToggle("BoxFill", { Text="Filled Box", Default=false, Callback=function(v) S.BoxFilled=v end })
+BoxStyle:AddSlider("FillTrans", { Text="Fill Transparency (%)", Default=85, Min=0, Max=100, Rounding=0,
     Callback=function(v) S.BoxFillTrans=v/100 end })
-
-BoxTab:CreateSection("Colors")
-BoxTab:CreateToggle({ Name="Type Color  (Enemy=Red / NPC=Orange)", CurrentValue=true, Flag="TypeCol",
+BoxStyle:AddToggle("TypeCol", { Text="Type Color (Enemy/NPC)", Default=true,
     Callback=function(v)
-        S.BoxColorEnemy = v and Color3.fromRGB(255,55,55)   or Color3.fromRGB(255,255,255)
-        S.BoxColorNPC   = v and Color3.fromRGB(255,165,0)   or Color3.fromRGB(255,255,255)
+        S.BoxColorEnemy = v and Color3.fromRGB(255,55,55) or Color3.fromRGB(255,255,255)
+        S.BoxColorNPC   = v and Color3.fromRGB(255,165,0) or Color3.fromRGB(255,255,255)
     end
 })
 
-BoxTab:CreateSection("Labels")
-BoxTab:CreateToggle({ Name="Show Names",    CurrentValue=true,  Flag="ShowNames", Callback=function(v) S.ShowNames=v end })
-BoxTab:CreateToggle({ Name="Show Distance", CurrentValue=true,  Flag="ShowDist",  Callback=function(v) S.ShowDistance=v end })
-BoxTab:CreateToggle({ Name="Show Health Bar",CurrentValue=true, Flag="ShowHP",    Callback=function(v) S.ShowHealthBar=v end })
-BoxTab:CreateToggle({ Name="Show Tracers",  CurrentValue=false, Flag="ShowTrac",  Callback=function(v) S.ShowTracers=v end })
+BoxLabels:AddToggle("ShowNames", { Text="Show Names", Default=true, Callback=function(v) S.ShowNames=v end })
+BoxLabels:AddToggle("ShowDist", { Text="Show Distance", Default=true, Callback=function(v) S.ShowDistance=v end })
+BoxLabels:AddToggle("ShowHP", { Text="Show Health Bar", Default=true, Callback=function(v) S.ShowHealthBar=v end })
+BoxLabels:AddSlider("NameSz", { Text="Name Size", Default=13, Min=8, Max=24, Rounding=0,
+    Callback=function(v) S.NameSize=v end })
+BoxLabels:AddSlider("DistSz", { Text="Distance Size", Default=11, Min=8, Max=20, Rounding=0,
+    Callback=function(v) S.DistSize=v end })
 
-BoxTab:CreateSection("Tracer")
-BoxTab:CreateDropdown({ Name="Tracer Origin", Options={"Bottom","Center"}, CurrentOption={"Bottom"}, Flag="TracOrig",
-    Callback=function(o) S.TracerOrigin=o[1] end })
-
-BoxTab:CreateSection("Text Sizes")
-BoxTab:CreateSlider({ Name="Name Size",     Range={8,24},Increment=1,CurrentValue=13,Flag="NameSz",Callback=function(v) S.NameSize=v end })
-BoxTab:CreateSlider({ Name="Distance Size", Range={8,20},Increment=1,CurrentValue=11,Flag="DistSz",Callback=function(v) S.DistSize=v end })
+BoxTracer:AddToggle("ShowTrac", { Text="Show Tracers", Default=false, Callback=function(v) S.ShowTracers=v end })
+BoxTracer:AddDropdown("TracOrig", { Text="Tracer Origin", Values={"Bottom","Center"}, Default=1,
+    Callback=function(v) S.TracerOrigin=v end })
 
 --// ─── FILTERS TAB ─────────────────────────────
-FilterTab:CreateSection("Filters")
-FilterTab:CreateToggle({ Name="Target NPCs",     CurrentValue=false,Flag="NPCEn",    Callback=function(v) S.NPCEnabled=v end })
-FilterTab:CreateToggle({ Name="Team Check",      CurrentValue=true, Flag="TeamChk",  Callback=function(v) S.TeamCheck=v end })
-FilterTab:CreateToggle({ Name="Wall Check (Aim)",CurrentValue=true, Flag="WallChk",  Callback=function(v) S.WallCheck=v end })
+local FilterCore = Tabs.Filters:AddLeftGroupbox("Filters", "funnel")
+FilterCore:AddToggle("NPCEn", { Text="Target NPCs", Default=false, Callback=function(v) S.NPCEnabled=v end })
+FilterCore:AddToggle("TeamChk", { Text="Team Check", Default=true, Callback=function(v) S.TeamCheck=v end })
+FilterCore:AddToggle("WallChk", { Text="Wall Check (Aim)", Default=true, Callback=function(v) S.WallCheck=v end })
 
 --// ─── MISC TAB ─────────────────────────────────
-MiscTab:CreateSection("Utilities")
-MiscTab:CreateButton({ Name="Clear All Boxes",
-    Callback=function()
-        for char, _ in pairs(Pool) do DestroyEntry(char) end
-        Rayfield:Notify({ Title="Done", Content="All boxes cleared.", Duration=2 })
-    end
-})
-MiscTab:CreateButton({ Name="Reset to Defaults",
-    Callback=function()
-        S.AimEnabled=false; S.FOV=150; S.Smoothness=0.18; S.Spread=2
-        FOVCircle.Radius=150
-        Rayfield:Notify({ Title="Reset", Content="Defaults restored.", Duration=3 })
-    end
-})
-MiscTab:CreateSection("Info")
-MiscTab:CreateLabel("Platform  : " .. (IsMobile and "Mobile (Screen-center aim)" or "PC (Mouse aim)"))
-MiscTab:CreateLabel("Aimbot    : Camera+1 priority — overwrites game camera last")
-MiscTab:CreateLabel("Boxes     : Humanoid.Died → instant Drawing:Remove()")
-MiscTab:CreateLabel("WallCheck : Global RaycastParams reused every frame")
+local MiscUtils = Tabs.Misc:AddLeftGroupbox("Utilities", "wrench")
+local MemeBox   = Tabs.Misc:AddLeftGroupbox("Memes", "laugh")
+local MiscInfo  = Tabs.Misc:AddRightGroupbox("Info", "info")
+
+MiscUtils:AddButton({ Text="Clear All Boxes", Func=function()
+    for char, _ in pairs(Pool) do DestroyEntry(char) end
+    Library:Notify({ Title="Done", Description="All boxes cleared.", Time=2 })
+end })
+
+MiscUtils:AddButton({ Text="Reset to Defaults", Func=function()
+    S.AimEnabled=false; S.FOV=150; S.Smoothness=0.18; S.Spread=2
+    FOVCircle.Radius=150
+    LockedTarget=nil; LockedUntil=0; LastTarget=nil
+    Library:Notify({ Title="Reset", Description="Defaults restored.", Time=3 })
+end })
+
+
+local MemeLines = {
+    "Skill issue detected 👀",
+    "Aim.exe atualizado com sucesso 😎",
+    "Errou? Lag do servidor 😅",
+    "Quando acerta: 300 IQ play 🧠",
+    "Quando morre: era só aquecimento 🔥"
+}
+
+MemeBox:AddButton({ Text="Meme aleatório", Func=function()
+    local msg = MemeLines[math.random(1, #MemeLines)]
+    Library:Notify({ Title="Meme Mode", Description=msg, Time=3 })
+end })
+
+MemeBox:AddButton({ Text="Ativar energia gamer", Func=function()
+    Library:Notify({ Title="Buff ativado", Description="FPS +500 | Mira +999 | Ping -120", Time=3 })
+end })
+
+MemeBox:AddLabel("Modo meme habilitado: sem tilt, só hit 😎", true)
+
+MiscInfo:AddLabel("Platform  : " .. (IsMobile and "Mobile (Screen-center aim)" or "PC (Mouse aim)"), true)
+MiscInfo:AddLabel("Aimbot    : Camera+1 priority — overwrites game camera last", true)
+MiscInfo:AddLabel("Boxes     : Humanoid.Died → instant Drawing:Remove()", true)
+MiscInfo:AddLabel("WallCheck : Global RaycastParams reused every frame", true)
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({})
+ThemeManager:SetFolder("AimBox")
+SaveManager:SetFolder("AimBox")
+SaveManager:SetSubFolder("default")
+SaveManager:BuildConfigSection(Tabs["UI Settings"])
+ThemeManager:ApplyToTab(Tabs["UI Settings"])
+SaveManager:LoadAutoloadConfig()
 
 --// ═══════════════════════════════════════════
 --//  MAIN LOOP
@@ -828,11 +864,8 @@ end)
 --// ═══════════════════════════════════════════
 --//  LOAD + NOTIFY
 --// ═══════════════════════════════════════════
-Rayfield:LoadConfiguration()
-
-Rayfield:Notify({
-    Title    = "Aimbot + Box ESP v4.0",
-    Content  = "Corner & Full box modes. Platform: " .. (IsMobile and "Mobile" or "PC"),
-    Duration = 5,
-    Image    = 4483362458
+Library:Notify({
+    Title = "Aimbot + Box ESP v4.0",
+    Description = "Obsidian UI loaded. UI antiga removida ✅ | Platform: " .. (IsMobile and "Mobile" or "PC"),
+    Time = 5
 })
