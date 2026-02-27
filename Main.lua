@@ -57,7 +57,9 @@ local S = {
     StickyAim    = true,
     StickyTime   = 0.35,
     AutoFireDelay = 0.08,
+    TargetSwitchDelay = 0.12,
     Deadzone     = 4,
+    AliveCheck   = true,
     AdaptiveSmooth = true,
     AdaptiveMinSmooth = 0.1,
 
@@ -103,6 +105,8 @@ local S = {
 local LastFireClock = 0
 local LockedTarget = nil
 local LockedUntil = 0
+local LastTarget = nil
+local LastSwitchClock = 0
 
 --// ═══════════════════════════════════════════
 --//  GLOBAL RAYCAST PARAMS  (created ONCE)
@@ -229,6 +233,33 @@ local function HideEntry(e)
     for _, k in ipairs(DRAW_KEYS) do
         if e[k] then e[k].Visible = false end
     end
+end
+
+local function IsHumAlive(hum)
+    if not hum then return false end
+    if hum.Health <= 0 then return false end
+    if not S.AliveCheck then return true end
+
+    local ok, state = pcall(function()
+        return hum:GetState()
+    end)
+    if ok and state == Enum.HumanoidStateType.Dead then
+        return false
+    end
+
+    return true
+end
+
+local function IsCharacterAlive(char)
+    if not char or not char.Parent then return false end
+    if not char:IsDescendantOf(workspace) then return false end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local head = char:FindFirstChild("Head")
+    if not hum or not hrp or not head then return false end
+
+    return IsHumAlive(hum)
 end
 
 --// ═══════════════════════════════════════════
@@ -437,9 +468,9 @@ local function GetTarget()
 
     for _, char in ipairs(workspace:GetChildren()) do
         if char == LPChar then continue end
-        local hum  = char:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
+        if not IsCharacterAlive(char) then continue end
 
+        local hum  = char:FindFirstChildOfClass("Humanoid")
         local part = char:FindFirstChild(S.TargetPart) or char:FindFirstChild("Head")
         if not part then continue end
 
@@ -480,7 +511,7 @@ local function IsPartTargetable(part)
     if char == LPChar then return false end
 
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
+    if not IsHumAlive(hum) then return false end
 
     if (Camera.CFrame.Position - part.Position).Magnitude > S.MaxDist then return false end
 
@@ -526,6 +557,7 @@ AimTab:CreateToggle({ Name="Velocity Prediction", CurrentValue=true,  Flag="VelP
 AimTab:CreateToggle({ Name="Require Right-Click (PC)", CurrentValue=true, Flag="ReqADS", Callback=function(v) S.RequireADS=v end })
 AimTab:CreateToggle({ Name="Visible Targets Only", CurrentValue=false, Flag="VisOnly", Callback=function(v) S.VisibleOnly=v end })
 AimTab:CreateToggle({ Name="Sticky Aim", CurrentValue=true, Flag="StickyAim", Callback=function(v) S.StickyAim=v end })
+AimTab:CreateToggle({ Name="Strict Alive Check", CurrentValue=true, Flag="AliveChk", Callback=function(v) S.AliveCheck=v end })
 AimTab:CreateToggle({ Name="Adaptive Smooth", CurrentValue=true, Flag="AdaptSm", Callback=function(v) S.AdaptiveSmooth=v end })
 
 AimTab:CreateSection("Parameters")
@@ -541,6 +573,8 @@ AimTab:CreateSlider({ Name="Sticky Time (ms)",              Range={0,1000},Incre
     Callback=function(v) S.StickyTime=v/1000 end })
 AimTab:CreateSlider({ Name="Auto Attack Delay (ms)",        Range={20,250},Increment=5, CurrentValue=80, Flag="AutoAtkDelay",
     Callback=function(v) S.AutoFireDelay=v/1000 end })
+AimTab:CreateSlider({ Name="Switch Delay (ms)",             Range={0,500}, Increment=10, CurrentValue=120, Flag="SwDelay",
+    Callback=function(v) S.TargetSwitchDelay=v/1000 end })
 AimTab:CreateSlider({ Name="Aim Deadzone (px)",             Range={0,35},  Increment=1, CurrentValue=4,  Flag="Deadzone",
     Callback=function(v) S.Deadzone=v end })
 AimTab:CreateSlider({ Name="Adaptive Min Smooth",            Range={1,100}, Increment=1, CurrentValue=10, Flag="MinSmooth",
@@ -673,6 +707,22 @@ RunService:BindToRenderStep("AimBox_Main", Enum.RenderPriority.Camera.Value + 1,
         end
     end
 
+    if LastTarget and target and target ~= LastTarget and (now - LastSwitchClock) < S.TargetSwitchDelay and IsPartTargetable(LastTarget) then
+        target = LastTarget
+    end
+
+    if target ~= LastTarget then
+        LastTarget = target
+        LastSwitchClock = now
+    end
+
+    if target and not IsPartTargetable(target) then
+        target = nil
+        LockedTarget = nil
+        LockedUntil = 0
+        LastTarget = nil
+    end
+
     if target then
         if S.DynamicFOVColor then
             FOVCircle.Color = canAim and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(255, 190, 80)
@@ -724,6 +774,7 @@ RunService:BindToRenderStep("AimBox_Main", Enum.RenderPriority.Camera.Value + 1,
         TargetDot.Visible = false
         LockedTarget = nil
         LockedUntil = 0
+        LastTarget = nil
     end
 
     --// ── BOX ESP  (throttled) ────────────────
