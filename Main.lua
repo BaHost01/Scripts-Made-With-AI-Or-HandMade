@@ -49,9 +49,19 @@ local S = {
     FOV          = 150,
     Smoothness   = 0.18,
     Spread       = 2,
+    RequireADS   = true,
+    VisibleOnly  = false,
     TargetPart   = "Head",
     Priority     = "Closest to Crosshair",
     WallCheck    = true,
+    StickyAim    = true,
+    StickyTime   = 0.35,
+    AutoFireDelay = 0.08,
+    TargetSwitchDelay = 0.12,
+    Deadzone     = 4,
+    AliveCheck   = true,
+    AdaptiveSmooth = true,
+    AdaptiveMinSmooth = 0.1,
 
     -- FILTERS
     NPCEnabled   = false,
@@ -60,6 +70,7 @@ local S = {
     -- FOV DRAWING
     ShowFOV      = true,
     ShowDot      = true,
+    DynamicFOVColor = true,
 
     -- 2D BOXES
     BoxEnabled   = true,
@@ -90,6 +101,12 @@ local S = {
     -- DISTANCE LIMIT
     MaxDist      = 500,
 }
+
+local LastFireClock = 0
+local LockedTarget = nil
+local LockedUntil = 0
+local LastTarget = nil
+local LastSwitchClock = 0
 
 --// ═══════════════════════════════════════════
 --//  GLOBAL RAYCAST PARAMS  (created ONCE)
@@ -216,6 +233,33 @@ local function HideEntry(e)
     for _, k in ipairs(DRAW_KEYS) do
         if e[k] then e[k].Visible = false end
     end
+end
+
+local function IsHumAlive(hum)
+    if not hum then return false end
+    if hum.Health <= 0 then return false end
+    if not S.AliveCheck then return true end
+
+    local ok, state = pcall(function()
+        return hum:GetState()
+    end)
+    if ok and state == Enum.HumanoidStateType.Dead then
+        return false
+    end
+
+    return true
+end
+
+local function IsCharacterAlive(char)
+    if not char or not char.Parent then return false end
+    if not char:IsDescendantOf(workspace) then return false end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local head = char:FindFirstChild("Head")
+    if not hum or not hrp or not head then return false end
+
+    return IsHumAlive(hum)
 end
 
 --// ═══════════════════════════════════════════
@@ -393,12 +437,17 @@ end
 --// ═══════════════════════════════════════════
 --//  WALL CHECK  (reuses global RaycastParams)
 --// ═══════════════════════════════════════════
-local function CheckWall(part)
-    if not S.WallCheck then return true end
+local function HasLineOfSight(part)
+    if not part or not part.Parent then return false end
     WallParams.FilterDescendantsInstances = { LPChar, part.Parent }
     local origin = Camera.CFrame.Position
     local result = workspace:Raycast(origin, part.Position - origin, WallParams)
     return result == nil
+end
+
+local function CheckWall(part)
+    if not S.WallCheck then return true end
+    return HasLineOfSight(part)
 end
 
 --// ═══════════════════════════════════════════
@@ -419,9 +468,9 @@ local function GetTarget()
 
     for _, char in ipairs(workspace:GetChildren()) do
         if char == LPChar then continue end
-        local hum  = char:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
+        if not IsCharacterAlive(char) then continue end
 
+        local hum  = char:FindFirstChildOfClass("Humanoid")
         local part = char:FindFirstChild(S.TargetPart) or char:FindFirstChild("Head")
         if not part then continue end
 
@@ -440,6 +489,7 @@ local function GetTarget()
 
         local dist2D = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
         if dist2D > S.FOV then continue end
+        if S.VisibleOnly and not HasLineOfSight(part) then continue end
 
         local score =
             S.Priority == "Lowest Health"    and hum.Health or
@@ -452,6 +502,34 @@ local function GetTarget()
         end
     end
     return best
+end
+
+local function IsPartTargetable(part)
+    if not part or not part.Parent then return false end
+
+    local char = part.Parent
+    if char == LPChar then return false end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not IsHumAlive(hum) then return false end
+
+    if (Camera.CFrame.Position - part.Position).Magnitude > S.MaxDist then return false end
+
+    local player = Players:GetPlayerFromCharacter(char)
+    if player then
+        if S.TeamCheck and player.Team and player.Team == LP.Team then return false end
+    else
+        if not S.NPCEnabled then return false end
+    end
+
+    local sp, vis = Camera:WorldToViewportPoint(part.Position)
+    if not vis or sp.Z <= 0 then return false end
+
+    local dist2D = (Vector2.new(sp.X, sp.Y) - GetAimOrigin()).Magnitude
+    if dist2D > S.FOV then return false end
+    if S.VisibleOnly and not HasLineOfSight(part) then return false end
+
+    return true
 end
 
 --// ═══════════════════════════════════════════
@@ -476,6 +554,11 @@ AimTab:CreateSection("Core")
 AimTab:CreateToggle({ Name="Enable Aimbot",       CurrentValue=false, Flag="AimEn",   Callback=function(v) S.AimEnabled  =v end })
 AimTab:CreateToggle({ Name="Auto Attack",         CurrentValue=false, Flag="AutoFire",Callback=function(v) S.AutoFire    =v end })
 AimTab:CreateToggle({ Name="Velocity Prediction", CurrentValue=true,  Flag="VelPred", Callback=function(v) S.Prediction  =v end })
+AimTab:CreateToggle({ Name="Require Right-Click (PC)", CurrentValue=true, Flag="ReqADS", Callback=function(v) S.RequireADS=v end })
+AimTab:CreateToggle({ Name="Visible Targets Only", CurrentValue=false, Flag="VisOnly", Callback=function(v) S.VisibleOnly=v end })
+AimTab:CreateToggle({ Name="Sticky Aim", CurrentValue=true, Flag="StickyAim", Callback=function(v) S.StickyAim=v end })
+AimTab:CreateToggle({ Name="Strict Alive Check", CurrentValue=true, Flag="AliveChk", Callback=function(v) S.AliveCheck=v end })
+AimTab:CreateToggle({ Name="Adaptive Smooth", CurrentValue=true, Flag="AdaptSm", Callback=function(v) S.AdaptiveSmooth=v end })
 
 AimTab:CreateSection("Parameters")
 AimTab:CreateSlider({ Name="FOV Radius",                    Range={30,450},Increment=5, CurrentValue=150,Flag="FOVRad",
@@ -486,6 +569,16 @@ AimTab:CreateSlider({ Name="Spread",                        Range={0,20},  Incre
     Callback=function(v) S.Spread=v end })
 AimTab:CreateSlider({ Name="Prediction Strength",           Range={0,30},  Increment=1, CurrentValue=8,  Flag="PredStr",
     Callback=function(v) S.PredStrength=v/100 end })
+AimTab:CreateSlider({ Name="Sticky Time (ms)",              Range={0,1000},Increment=25,CurrentValue=350,Flag="StickyTime",
+    Callback=function(v) S.StickyTime=v/1000 end })
+AimTab:CreateSlider({ Name="Auto Attack Delay (ms)",        Range={20,250},Increment=5, CurrentValue=80, Flag="AutoAtkDelay",
+    Callback=function(v) S.AutoFireDelay=v/1000 end })
+AimTab:CreateSlider({ Name="Switch Delay (ms)",             Range={0,500}, Increment=10, CurrentValue=120, Flag="SwDelay",
+    Callback=function(v) S.TargetSwitchDelay=v/1000 end })
+AimTab:CreateSlider({ Name="Aim Deadzone (px)",             Range={0,35},  Increment=1, CurrentValue=4,  Flag="Deadzone",
+    Callback=function(v) S.Deadzone=v end })
+AimTab:CreateSlider({ Name="Adaptive Min Smooth",            Range={1,100}, Increment=1, CurrentValue=10, Flag="MinSmooth",
+    Callback=function(v) S.AdaptiveMinSmooth=v/100 end })
 
 AimTab:CreateSection("Target")
 AimTab:CreateDropdown({ Name="Priority",
@@ -500,6 +593,7 @@ AimTab:CreateDropdown({ Name="Target Part",
 AimTab:CreateSection("Visuals")
 AimTab:CreateToggle({ Name="Show FOV Circle",CurrentValue=true, Flag="ShowFOV",Callback=function(v) S.ShowFOV=v; FOVCircle.Visible=v end })
 AimTab:CreateToggle({ Name="Show Target Dot",CurrentValue=true, Flag="ShowDot",Callback=function(v) S.ShowDot=v end })
+AimTab:CreateToggle({ Name="Dynamic FOV Color",CurrentValue=true, Flag="DynFovCol",Callback=function(v) S.DynamicFOVColor=v end })
 
 --// ─── 2D BOXES TAB ────────────────────────────
 BoxTab:CreateSection("Box")
@@ -588,11 +682,52 @@ RunService:BindToRenderStep("AimBox_Main", Enum.RenderPriority.Camera.Value + 1,
 
     local origin = GetAimOrigin()
     FOVCircle.Position = origin
+    if S.DynamicFOVColor then
+        FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+    end
 
     --// ── AIMBOT ──────────────────────────────
-    local target = GetTarget()
+    local canAim = S.AimEnabled
+    if canAim and S.RequireADS and not IsMobile then
+        canAim = UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    end
+
+    local now = tick()
+    local target
+    if S.StickyAim and LockedTarget and now <= LockedUntil and IsPartTargetable(LockedTarget) then
+        target = LockedTarget
+    else
+        target = GetTarget()
+        if S.StickyAim and target then
+            LockedTarget = target
+            LockedUntil = now + S.StickyTime
+        else
+            LockedTarget = nil
+            LockedUntil = 0
+        end
+    end
+
+    if LastTarget and target and target ~= LastTarget and (now - LastSwitchClock) < S.TargetSwitchDelay and IsPartTargetable(LastTarget) then
+        target = LastTarget
+    end
+
+    if target ~= LastTarget then
+        LastTarget = target
+        LastSwitchClock = now
+    end
+
+    if target and not IsPartTargetable(target) then
+        target = nil
+        LockedTarget = nil
+        LockedUntil = 0
+        LastTarget = nil
+    end
 
     if target then
+        if S.DynamicFOVColor then
+            FOVCircle.Color = canAim and Color3.fromRGB(255, 80, 80) or Color3.fromRGB(255, 190, 80)
+        end
+
         if S.ShowDot then
             local sp = Camera:WorldToViewportPoint(target.Position)
             TargetDot.Position = Vector2.new(sp.X, sp.Y)
@@ -601,29 +736,45 @@ RunService:BindToRenderStep("AimBox_Main", Enum.RenderPriority.Camera.Value + 1,
             TargetDot.Visible = false
         end
 
-        if S.AimEnabled and CheckWall(target) then
-            local sp = S.Spread / 10
-            local ap = Predict(target) + Vector3.new(
-                (math.random()*2-1)*sp,
-                (math.random()*2-1)*sp,
-                (math.random()*2-1)*sp
-            )
-            -- Camera+1 priority: this is the last CFrame write this frame
-            Camera.CFrame = Camera.CFrame:Lerp(
-                CFrame.new(Camera.CFrame.Position, ap),
-                S.Smoothness
-            )
+        if canAim and CheckWall(target) then
+            local targetSP = Camera:WorldToViewportPoint(target.Position)
+            local targetDelta = (Vector2.new(targetSP.X, targetSP.Y) - origin).Magnitude
+            if targetDelta > S.Deadzone then
+                local smooth = S.Smoothness
+                if S.AdaptiveSmooth then
+                    local t = math.clamp(targetDelta / math.max(S.FOV, 1), 0, 1)
+                    local minS = math.min(S.AdaptiveMinSmooth, S.Smoothness)
+                    local maxS = math.max(S.AdaptiveMinSmooth, S.Smoothness)
+                    smooth = minS + (maxS - minS) * t
+                end
 
-            if S.AutoFire and not IsMobile then
-                task.spawn(function()   -- non-blocking: won't stall render step
-                    pcall(mouse1press)
-                    task.wait(0.05)
-                    pcall(mouse1release)
-                end)
+                local sp = S.Spread / 10
+                local ap = Predict(target) + Vector3.new(
+                    (math.random()*2-1)*sp,
+                    (math.random()*2-1)*sp,
+                    (math.random()*2-1)*sp
+                )
+                -- Camera+1 priority: this is the last CFrame write this frame
+                Camera.CFrame = Camera.CFrame:Lerp(
+                    CFrame.new(Camera.CFrame.Position, ap),
+                    smooth
+                )
+
+                if S.AutoFire and not IsMobile and (now - LastFireClock) >= S.AutoFireDelay then
+                    LastFireClock = now
+                    task.spawn(function()   -- non-blocking: won't stall render step
+                        pcall(mouse1press)
+                        task.wait(0.05)
+                        pcall(mouse1release)
+                    end)
+                end
             end
         end
     else
         TargetDot.Visible = false
+        LockedTarget = nil
+        LockedUntil = 0
+        LastTarget = nil
     end
 
     --// ── BOX ESP  (throttled) ────────────────
