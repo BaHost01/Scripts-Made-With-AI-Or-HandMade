@@ -1,6 +1,9 @@
 local placeid = game.PlaceId
+local PLACE_AUTOFARM = 119987266683883
+local PLACE_AIMBOT_ONE = 72920620366355
+local PLACE_AIMBOT_TWO = 136801880565837
 
-if placeid == 119987266683883 then
+if placeid == PLACE_AUTOFARM then
     --// ============================================================
 --//   AutoFarm v5 — Obsidian UI Edition
 --//   Uses: https://github.com/deividcomsono/Obsidian
@@ -1053,8 +1056,7 @@ print("[AutoFarm v5] Loaded.")
 print("  holdproximityprompt available:", HAS_HOLD_FIRE)
 print("  Rarities detected:", table.concat(rarityList, ", "))
 print("  Menu: RightShift | Manual interact key: E (rebindable)")
-end)
-elseif placeid == 72920620366355 or 136801880565837 then
+elseif placeid == PLACE_AIMBOT_ONE or placeid == PLACE_AIMBOT_TWO then
 --[[
     ╔══════════════════════════════════════════════╗
     ║     AIMBOT + 2D BOX ESP  v4.0                ║
@@ -1926,4 +1928,6 @@ Library:Notify({
     Description = "Obsidian UI loaded. UI antiga removida ✅ | Platform: " .. (IsMobile and "Mobile" or "PC"),
     Time = 5
 })
-end)
+else
+    warn("[Universal] This place is not configured:", placeid)
+end
