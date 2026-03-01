@@ -6,6 +6,7 @@
 --// SERVICES
 local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local player = Players.LocalPlayer
 
@@ -84,6 +85,8 @@ local DEFAULTS = {
     InteractDelay = 0.08,
     LandOffset    = 2,
     ManualScanRadius = 20, -- studs to scan for manual interact
+    RespawnBoostTime = 8,
+    RespawnLoopDelay = 0.05,
 }
 
 --// ============================================================
@@ -98,6 +101,8 @@ local State = {
     -- Manual interact
     NearbyPrompt     = nil, -- closest ProximityPrompt to player right now
     ManualHolding    = false,
+    ForceNextCycle   = false,
+    RespawnBoostUntil = 0,
 }
 
 --// ============================================================
@@ -153,6 +158,12 @@ ControlBox:AddToggle("AutoFarm", {
     Default = false,
     Risky   = true,
     Tooltip = "Starts the automated farm loop for selected rarities",
+})
+
+ControlBox:AddToggle("FastReacquire", {
+    Text    = "Fast Reacquire (respawn/spawn)",
+    Default = true,
+    Tooltip = "When you respawn or a brainrot appears, force a quick cycle so targets are detected faster.",
 })
 
 ControlBox:AddToggle("AutoTeleport", {
@@ -439,6 +450,18 @@ InteractBox:AddSlider("LoopDelay", {
     Tooltip = "Pause between full farm cycles",
 })
 
+InteractBox:AddSlider("RespawnBoostTime", {
+    Text = "Respawn Boost Time", Default = DEFAULTS.RespawnBoostTime,
+    Min = 0, Max = 20, Rounding = 0, Suffix = "s",
+    Tooltip = "How long to keep fast checks active after respawn or fresh brainrot spawn",
+})
+
+InteractBox:AddSlider("RespawnLoopDelay", {
+    Text = "Boost Loop Delay", Default = DEFAULTS.RespawnLoopDelay,
+    Min = 0.02, Max = 0.5, Rounding = 2, Suffix = "s",
+    Tooltip = "Temporary loop delay used while boost window is active",
+})
+
 InteractBox:AddDivider()
 
 InteractBox:AddToggle("NotifyOnFarm", {
@@ -501,6 +524,8 @@ local function getCfg()
         InteractTries = Options.InteractTries.Value,
         InteractDelay = Options.InteractDelay.Value,
         ManualRadius  = Options.ManualScanRadius.Value,
+        RespawnBoostTime = Options.RespawnBoostTime.Value,
+        RespawnLoopDelay = Options.RespawnLoopDelay.Value,
     }
 end
 
@@ -818,12 +843,51 @@ function _G.AF_SingleCycle()
     setStatus("Ready")
 end
 
+local function queueFastCycle(reason)
+    if not Toggles.FastReacquire.Value then return end
+    State.ForceNextCycle = true
+    local c = getCfg()
+    if c.RespawnBoostTime > 0 then
+        State.RespawnBoostUntil = math.max(State.RespawnBoostUntil, os.clock() + c.RespawnBoostTime)
+    end
+    if reason then pushLog("Fast scan: " .. reason) end
+end
+
+player.CharacterAdded:Connect(function(char)
+    queueFastCycle("respawn")
+    setStatus("Respawned - reacquiring targets")
+    task.spawn(function()
+        local hrp = char:WaitForChild("HumanoidRootPart", 6)
+        if hrp and not State.Endpoint then
+            State.Endpoint = hrp.CFrame
+            pushLog("Endpoint auto-set after respawn")
+        end
+    end)
+end)
+
+if brainrotsFolder then
+    brainrotsFolder.DescendantAdded:Connect(function(desc)
+        if desc:IsA("Model") then
+            queueFastCycle("brainrot spawned")
+        end
+    end)
+end
+
 --// ============================================================
 --// MAIN FARM LOOP
 --// ============================================================
 task.spawn(function()
     while true do
-        task.wait(Options.LoopDelay and Options.LoopDelay.Value or 0.2)
+        local baseDelay = Options.LoopDelay and Options.LoopDelay.Value or 0.2
+        local delay = baseDelay
+        if os.clock() < State.RespawnBoostUntil then
+            delay = math.min(baseDelay, Options.RespawnLoopDelay and Options.RespawnLoopDelay.Value or 0.05)
+        end
+        if State.ForceNextCycle then
+            delay = 0.03
+            State.ForceNextCycle = false
+        end
+        task.wait(delay)
 
         if not Toggles.AutoFarm.Value then
             setStatus("Idle")
@@ -850,6 +914,33 @@ task.spawn(function()
 end)
 
 --// ============================================================
+--// PROXIMITY PROMPT CACHE
+--// Tracks prompts once and updates the cache incrementally so
+--// manual scans don't walk the entire workspace each tick.
+--// ============================================================
+local trackedPrompts = {}
+
+local function trackPrompt(instance)
+    if instance:IsA("ProximityPrompt") then
+        trackedPrompts[instance] = true
+    end
+end
+
+local function untrackPrompt(instance)
+    if instance:IsA("ProximityPrompt") then
+        trackedPrompts[instance] = nil
+    end
+end
+
+for _, desc in ipairs(workspace:GetDescendants()) do
+    trackPrompt(desc)
+end
+
+workspace.DescendantAdded:Connect(trackPrompt)
+workspace.DescendantRemoving:Connect(untrackPrompt)
+ProximityPromptService.PromptShown:Connect(trackPrompt)
+
+--// ============================================================
 --// MANUAL INTERACT — NEARBY PROMPT SCANNER (RunService)
 --// Updates the Manual tab's nearby prompt info every 0.25s
 --// and keeps State.NearbyPrompt up to date for the keybind.
@@ -871,13 +962,15 @@ RunService.Heartbeat:Connect(function(dt)
 
     -- Collect all enabled prompts within scan radius, sorted by distance
     local found = {}
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("ProximityPrompt") and v.Enabled then
-            local part = v.Parent
+    for prompt in pairs(trackedPrompts) do
+        if not prompt.Parent then
+            trackedPrompts[prompt] = nil
+        elseif prompt.Enabled then
+            local part = prompt.Parent
             if part and part:IsA("BasePart") then
                 local d = (hrp.Position - part.Position).Magnitude
                 if d <= radius then
-                    table.insert(found, { prompt = v, dist = d })
+                    table.insert(found, { prompt = prompt, dist = d })
                 end
             end
         end
