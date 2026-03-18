@@ -7,6 +7,7 @@
 local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ProximityPromptService = game:GetService("ProximityPromptService")
+local RS         = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 
@@ -87,6 +88,8 @@ local DEFAULTS = {
     ManualScanRadius = 20, -- studs to scan for manual interact
     RespawnBoostTime = 8,
     RespawnLoopDelay = 0.05,
+    RebirthEvery     = 10, -- fazer rebirth a cada N collects (0 = desativado)
+    SpinInterval     = 5,  -- segundos entre cada spin automático
 }
 
 --// ============================================================
@@ -103,6 +106,7 @@ local State = {
     ManualHolding    = false,
     ForceNextCycle   = false,
     RespawnBoostUntil = 0,
+    CollectsSinceRebirth = 0, -- contador para auto rebirth
 }
 
 --// ============================================================
@@ -127,6 +131,43 @@ else
     rarityList = { "Secret", "Divine", "Celestial", "Legendary", "Epic" }
     warn("[AutoFarm] Brainrots folder not found — using fallback rarity list.")
 end
+
+--// ============================================================
+--// REMOTES (Speed + Rebirth)
+--// ============================================================
+local eventsFolder  = RS:WaitForChild("Events", 10)
+local SpeedRemote   = eventsFolder and eventsFolder:FindFirstChild("Speed")
+local RebirthRemote = eventsFolder and eventsFolder:FindFirstChild("Rebirth")
+
+-- Spin wheel fica em Remotes/SpinWheel/RequestSpin
+local spinWheelFolder = RS:FindFirstChild("Remotes")
+    and RS.Remotes:FindFirstChild("SpinWheel")
+local SpinRemote = spinWheelFolder and spinWheelFolder:FindFirstChild("RequestSpin")
+
+-- Aplica o speed boost do jogo via RemoteFunction (InvokeServer)
+local function applySpeedBoost()
+    if SpeedRemote then
+        pcall(function() SpeedRemote:InvokeServer("Speed", 1) end)
+        print("[AutoFarm v5] Speed boost aplicado.")
+    else
+        warn("[AutoFarm v5] SpeedRemote não encontrado.")
+    end
+end
+
+-- Faz rebirth via RemoteFunction; retorna true se bem-sucedido
+local function doRebirth()
+    if not RebirthRemote then
+        warn("[AutoFarm v5] RebirthRemote não encontrado.")
+        return false
+    end
+    local ok = pcall(function()
+        RebirthRemote:InvokeServer("Rebirth")
+    end)
+    return ok
+end
+
+-- Aplica speed boost no início
+applySpeedBoost()
 
 --// ============================================================
 --// WINDOW
@@ -472,6 +513,96 @@ InteractBox:AddToggle("NotifyOnError", {
     Text = "Notify on errors", Default = true,
 })
 
+InteractBox:AddDivider()
+
+--// AUTO REBIRTH
+local RebirthBox = Tabs.Settings:AddLeftGroupbox("Auto Rebirth", "refresh-cw")
+
+RebirthBox:AddToggle("AutoRebirth", {
+    Text    = "Auto Rebirth",
+    Default = false,
+    Tooltip = "Faz rebirth automaticamente após coletar N brainrots",
+})
+
+RebirthBox:AddSlider("RebirthEvery", {
+    Text     = "Rebirth a cada N collects",
+    Default  = DEFAULTS.RebirthEvery,
+    Min      = 1,
+    Max      = 200,
+    Rounding = 0,
+    Suffix   = " x",
+    Tooltip  = "Quantos brainrots coletar antes de tentar um rebirth",
+})
+
+RebirthBox:AddButton({
+    Text    = "Rebirth Agora",
+    Tooltip = "Executa um rebirth imediatamente (ignora o contador)",
+    Func = function()
+        task.spawn(function()
+            local ok = doRebirth()
+            if ok then
+                State.CollectsSinceRebirth = 0
+                Library:Notify({ Title = "Rebirth!", Description = "Rebirth executado com sucesso.", Time = 3 })
+            else
+                Library:Notify({ Title = "Rebirth falhou", Description = "Verifique os requisitos no jogo.", Time = 3 })
+            end
+        end)
+    end,
+})
+
+local LblRebirthCount = RebirthBox:AddLabel("Collects desde último rebirth: 0", true)
+
+--// AUTO SPIN
+local SpinBox = Tabs.Settings:AddLeftGroupbox("Auto Spin", "rotate-cw")
+
+SpinBox:AddToggle("AutoSpin", {
+    Text    = "Auto Spin",
+    Default = false,
+    Tooltip = "Gira a spin wheel automaticamente a cada N segundos",
+})
+
+SpinBox:AddSlider("SpinInterval", {
+    Text     = "Intervalo entre spins",
+    Default  = DEFAULTS.SpinInterval,
+    Min      = 1,
+    Max      = 60,
+    Rounding = 0,
+    Suffix   = "s",
+    Tooltip  = "Tempo de espera entre cada spin automático",
+})
+
+SpinBox:AddButton({
+    Text    = "Spin Agora",
+    Tooltip = "Gira a roda imediatamente",
+    Func = function()
+        if SpinRemote then
+            pcall(function() SpinRemote:FireServer() end)
+            Library:Notify({ Title = "Spin!", Description = "RequestSpin enviado.", Time = 2 })
+        else
+            Library:Notify({ Title = "Erro", Description = "SpinRemote não encontrado.", Time = 3 })
+        end
+    end,
+})
+
+local LblSpinCount = SpinBox:AddLabel("Spins esta sessão: 0", true)
+
+-- Loop de auto spin (independente do farm loop)
+local spinCount = 0
+task.spawn(function()
+    while true do
+        local interval = Options.SpinInterval and Options.SpinInterval.Value or DEFAULTS.SpinInterval
+        task.wait(interval)
+        if Toggles.AutoSpin and Toggles.AutoSpin.Value then
+            if SpinRemote then
+                pcall(function() SpinRemote:FireServer() end)
+                spinCount += 1
+                pcall(function() LblSpinCount:SetText("Spins esta sessão: " .. spinCount) end)
+                pushLog("Spin #" .. spinCount)
+            end
+        end
+    end
+end)
+
 --// ============================================================
 --// ══════════════  UI SETTINGS TAB  ════════════════════════
 --// ============================================================
@@ -526,6 +657,7 @@ local function getCfg()
         ManualRadius  = Options.ManualScanRadius.Value,
         RespawnBoostTime = Options.RespawnBoostTime.Value,
         RespawnLoopDelay = Options.RespawnLoopDelay.Value,
+        RebirthEvery     = Options.RebirthEvery and Options.RebirthEvery.Value or DEFAULTS.RebirthEvery,
     }
 end
 
@@ -831,6 +963,31 @@ function _G.AF_SingleCycle()
     pcall(function() LblCount:SetText("Farmed this session: " .. State.FarmedCount) end)
     pushLog(string.format("[%s] %s", rarity, target.Name))
 
+    --// AUTO REBIRTH CHECK
+    if Toggles.AutoRebirth and Toggles.AutoRebirth.Value then
+        State.CollectsSinceRebirth += 1
+        pcall(function()
+            LblRebirthCount:SetText("Collects desde último rebirth: " .. State.CollectsSinceRebirth)
+        end)
+        local c = getCfg()
+        if State.CollectsSinceRebirth >= c.RebirthEvery then
+            setStatus("Rebirth...")
+            pushLog("Auto Rebirth iniciado (" .. State.CollectsSinceRebirth .. " collects)")
+            local ok = doRebirth()
+            if ok then
+                State.CollectsSinceRebirth = 0
+                pushLog("Rebirth OK — contador zerado")
+                if Toggles.NotifyOnFarm and Toggles.NotifyOnFarm.Value then
+                    Library:Notify({ Title = "Rebirth!", Description = "Auto rebirth executado.", Time = 3 })
+                end
+                -- Reaplicar speed boost após rebirth (stats resetam)
+                task.delay(1, applySpeedBoost)
+            else
+                pushLog("Rebirth FALHOU (requisitos não atingidos?)")
+            end
+        end
+    end
+
     if Toggles.NotifyOnFarm.Value then
         Library:Notify({ Title = "Collected!", Description = displayName, Time = 2 })
     end
@@ -856,6 +1013,8 @@ end
 player.CharacterAdded:Connect(function(char)
     queueFastCycle("respawn")
     setStatus("Respawned - reacquiring targets")
+    -- Reaplicar speed boost após respawn (pode resetar no servidor)
+    task.delay(1, applySpeedBoost)
     task.spawn(function()
         local hrp = char:WaitForChild("HumanoidRootPart", 6)
         if hrp and not State.Endpoint then
@@ -1039,10 +1198,11 @@ end)
 --// ============================================================
 Library:OnUnload(function()
     Toggles.AutoFarm:SetValue(false)
-    State.Running       = false
-    State.ManualHolding = false
-    _G.AF_SingleCycle   = nil
-    _G.AF_FirePrompt    = nil
+    State.Running            = false
+    State.ManualHolding      = false
+    State.CollectsSinceRebirth = 0
+    _G.AF_SingleCycle        = nil
+    _G.AF_FirePrompt         = nil
     print("[AutoFarm v5] Unloaded cleanly.")
 end)
 
