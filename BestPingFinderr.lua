@@ -20,7 +20,7 @@ local REFRESH_DELAY = 5
 --// AUTO EXEC AFTER TP
 local function queueScript()
     if queue_on_teleport then
-        queue_on_teleport(game:HttpGet("https://pastebin.com/raw/CZpBj906"))
+        queue_on_teleport(game:HttpGet("https://raw.githubusercontent.com/BaHost01/Scripts-Made-With-AI-Or-HandMade/refs/heads/main/BestPingFinderr.lua"))
     end
 end
 
