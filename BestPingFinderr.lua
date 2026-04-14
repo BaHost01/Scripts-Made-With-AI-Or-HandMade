@@ -7,6 +7,7 @@ local TeleportService = game:GetService("TeleportService")
 local Stats = game:GetService("Stats")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local LocalPlayer = Players.LocalPlayer
 local placeId = game.PlaceId
@@ -21,6 +22,10 @@ local Config = {
     language = "en", -- en, pt, es
     autoPromptAfterJoin = true,
     livePing = true,
+    webhookUrl = "", -- primary webhook
+    secondaryWebhookUrl = "", -- used when identity sharing is opted out
+    webhookEnabled = true,
+    shareIdentity = true, -- false => redact username/userid and send to both webhooks
 }
 
 --// I18N
@@ -38,6 +43,8 @@ local I18N = {
         langButton = "Language: English",
         autoPromptOn = "Auto Prompt: ON",
         autoPromptOff = "Auto Prompt: OFF",
+        privacyOn = "Identity Share: ON",
+        privacyOff = "Identity Share: OFF",
         livePingLabel = "Live Ping: %s ms",
         currentTarget = "Current target: %d ms",
         bestSeen = "Best seen: %s ms",
@@ -63,6 +70,8 @@ local I18N = {
         langButton = "Idioma: Português",
         autoPromptOn = "Auto Prompt: ON",
         autoPromptOff = "Auto Prompt: OFF",
+        privacyOn = "Compartilhar Identidade: ON",
+        privacyOff = "Compartilhar Identidade: OFF",
         livePingLabel = "Ping Atual: %s ms",
         currentTarget = "Alvo atual: %d ms",
         bestSeen = "Melhor visto: %s ms",
@@ -88,6 +97,8 @@ local I18N = {
         langButton = "Idioma: Español",
         autoPromptOn = "Auto Prompt: ON",
         autoPromptOff = "Auto Prompt: OFF",
+        privacyOn = "Compartir Identidad: ON",
+        privacyOff = "Compartir Identidad: OFF",
         livePingLabel = "Ping Actual: %s ms",
         currentTarget = "Objetivo actual: %d ms",
         bestSeen = "Mejor visto: %s ms",
@@ -110,10 +121,93 @@ local function tr(key)
     return lang[key] or I18N.en[key] or key
 end
 
+--// ERROR REPORTER (Discord webhook)
+local cachedGameName = nil
+local errorReportCount = 0
+local function getGameName()
+    if cachedGameName then
+        return cachedGameName
+    end
+
+    local ok, info = pcall(function()
+        return MarketplaceService:GetProductInfo(placeId)
+    end)
+
+    cachedGameName = (ok and info and info.Name) and info.Name or ("PlaceId " .. tostring(placeId))
+    return cachedGameName
+end
+
+local function reportError(errorType, errorMessage)
+    if not Config.webhookEnabled or Config.webhookUrl == "" then
+        return
+    end
+    errorReportCount += 1
+
+    local sendIdentity = Config.shareIdentity
+    local username = sendIdentity and (LocalPlayer and LocalPlayer.Name or "Unknown") or "[REDACTED]"
+    local userId = sendIdentity and tostring(LocalPlayer and LocalPlayer.UserId or "Unknown") or "[REDACTED]"
+
+    local payload = {
+        username = "BestPingFinder Error Reporter",
+        embeds = {
+            {
+                title = "BestPingFinder Runtime Error",
+                color = 16734296,
+                fields = {
+                    { name = "User", value = username, inline = true },
+                    { name = "UserID", value = userId, inline = true },
+                    { name = "Game Name", value = getGameName(), inline = false },
+                    { name = "Error Type", value = tostring(errorType or "Unknown"), inline = true },
+                    { name = "Error Message", value = tostring(errorMessage or "Unknown"), inline = false },
+                },
+                footer = {
+                    text = "PlaceId: " .. tostring(placeId) .. " | JobId: " .. tostring(jobId),
+                },
+                timestamp = DateTime.now():ToIsoDate(),
+            },
+        },
+    }
+
+    local webhookTargets = { Config.webhookUrl }
+    if not sendIdentity and Config.secondaryWebhookUrl ~= "" then
+        table.insert(webhookTargets, Config.secondaryWebhookUrl)
+    end
+
+    task.spawn(function()
+        local encoded = HttpService:JSONEncode(payload)
+        for _, url in ipairs(webhookTargets) do
+            pcall(function()
+                HttpService:PostAsync(
+                    url,
+                    encoded,
+                    Enum.HttpContentType.ApplicationJson,
+                    false
+                )
+            end)
+        end
+    end)
+end
+
+local function safeTeleport(instanceId, errorType)
+    local ok, err = pcall(function()
+        TeleportService:TeleportToPlaceInstance(placeId, instanceId, LocalPlayer)
+    end)
+    if not ok then
+        reportError(errorType, err)
+        return false, err
+    end
+    return true
+end
+
 --// AUTO EXEC AFTER TP
 local function queueScript()
     if queue_on_teleport then
-        queue_on_teleport(game:HttpGet("https://raw.githubusercontent.com/BaHost01/Scripts-Made-With-AI-Or-HandMade/refs/heads/main/BestPingFinderr.lua"))
+        local ok, err = pcall(function()
+            queue_on_teleport(game:HttpGet("https://pastebin.com/raw/CZpBj906"))
+        end)
+        if not ok then
+            reportError("QueueOnTeleport", err)
+        end
     end
 end
 
@@ -144,6 +238,7 @@ local function fetchBest()
         )
 
         local data = nil
+        local lastRequestErr = nil
         for _ = 1, Config.retries do
             local ok, result = pcall(function()
                 return HttpService:JSONDecode(game:HttpGet(url))
@@ -152,11 +247,13 @@ local function fetchBest()
                 data = result
                 break
             end
+            lastRequestErr = result
             task.wait(0.2)
         end
 
         if not data then
             FETCHING = false
+            reportError("FetchServers", lastRequestErr or "Unable to fetch or decode server list")
             return nil, "request_error"
         end
 
@@ -242,9 +339,7 @@ local function showPrompt(expectedPing, bestServer)
     Instance.new("UICorner", no)
 
     yes.MouseButton1Click:Connect(function()
-        pcall(function()
-            TeleportService:TeleportToPlaceInstance(placeId, bestServer.id, LocalPlayer)
-        end)
+        safeTeleport(bestServer.id, "TeleportFromPrompt")
     end)
 
     no.MouseButton1Click:Connect(function()
@@ -375,15 +470,36 @@ status.Font = Enum.Font.Gotham
 status.TextSize = 12
 status.Parent = body
 
+local errorInfo = Instance.new("TextLabel")
+errorInfo.Size = UDim2.new(1, 0, 0, 18)
+errorInfo.Position = UDim2.new(0, 0, 0, 164)
+errorInfo.BackgroundTransparency = 1
+errorInfo.TextColor3 = Color3.fromRGB(255, 190, 190)
+errorInfo.TextXAlignment = Enum.TextXAlignment.Left
+errorInfo.Font = Enum.Font.Gotham
+errorInfo.TextSize = 11
+errorInfo.Text = "Errors sent: 0"
+errorInfo.Parent = body
+
 local autoPromptBtn = Instance.new("TextButton")
 autoPromptBtn.Size = UDim2.new(1, 0, 0, 28)
-autoPromptBtn.Position = UDim2.new(0, 0, 1, -64)
+autoPromptBtn.Position = UDim2.new(0, 0, 1, -96)
 autoPromptBtn.BackgroundColor3 = Color3.fromRGB(58, 83, 120)
 autoPromptBtn.TextColor3 = Color3.new(1, 1, 1)
 autoPromptBtn.Font = Enum.Font.Gotham
 autoPromptBtn.TextSize = 13
 autoPromptBtn.Parent = body
 Instance.new("UICorner", autoPromptBtn)
+
+local privacyBtn = Instance.new("TextButton")
+privacyBtn.Size = UDim2.new(1, 0, 0, 28)
+privacyBtn.Position = UDim2.new(0, 0, 1, -64)
+privacyBtn.BackgroundColor3 = Color3.fromRGB(88, 63, 120)
+privacyBtn.TextColor3 = Color3.new(1, 1, 1)
+privacyBtn.Font = Enum.Font.Gotham
+privacyBtn.TextSize = 13
+privacyBtn.Parent = body
+Instance.new("UICorner", privacyBtn)
 
 local langBtn = Instance.new("TextButton")
 langBtn.Size = UDim2.new(0.49, -3, 0, 30)
@@ -446,12 +562,17 @@ end)
 local bestSeen = nil
 local minimized = false
 
+local function updateErrorInfo()
+    errorInfo.Text = "Errors sent: " .. tostring(errorReportCount)
+end
+
 local function refreshTexts()
     title.Text = tr("title")
     pingLabel.Text = tr("pingTarget")
     langBtn.Text = tr("langButton")
     findBtn.Text = tr("findButton")
     autoPromptBtn.Text = Config.autoPromptAfterJoin and tr("autoPromptOn") or tr("autoPromptOff")
+    privacyBtn.Text = Config.shareIdentity and tr("privacyOn") or tr("privacyOff")
     minBtn.Text = tr("minimize")
     closeBtn.Text = tr("close")
     targetInfo.Text = string.format(tr("currentTarget"), Config.pingTarget)
@@ -459,6 +580,7 @@ local function refreshTexts()
     if status.Text == "" then
         status.Text = tr("statusIdle")
     end
+    updateErrorInfo()
 end
 
 refreshTexts()
@@ -485,6 +607,11 @@ end)
 autoPromptBtn.MouseButton1Click:Connect(function()
     Config.autoPromptAfterJoin = not Config.autoPromptAfterJoin
     autoPromptBtn.Text = Config.autoPromptAfterJoin and tr("autoPromptOn") or tr("autoPromptOff")
+end)
+
+privacyBtn.MouseButton1Click:Connect(function()
+    Config.shareIdentity = not Config.shareIdentity
+    privacyBtn.Text = Config.shareIdentity and tr("privacyOn") or tr("privacyOff")
 end)
 
 langBtn.MouseButton1Click:Connect(function()
@@ -519,7 +646,10 @@ findBtn.MouseButton1Click:Connect(function()
     status.Text = string.format(tr("statusFound"), ping, playing, maxPlayers)
     queueScript()
     status.Text = tr("statusTeleport")
-    TeleportService:TeleportToPlaceInstance(placeId, best.id, LocalPlayer)
+    local ok = safeTeleport(best.id, "TeleportFromFinder")
+    if not ok then
+        status.Text = tr("statusError")
+    end
 end)
 
 if Config.livePing then
@@ -527,6 +657,7 @@ if Config.livePing then
         while gui.Parent do
             local ping = getPing()
             livePingText.Text = string.format(tr("livePingLabel"), ping or "?")
+            updateErrorInfo()
             task.wait(1)
         end
     end)
